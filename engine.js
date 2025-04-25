@@ -8,6 +8,8 @@ const boardEngine = (() => {
   const incoming = [];          // objetos {x,y,type}
   let   boss     = null;
 
+  const exports = { rookExtra:0, pawnFast:false };
+
   /* -------- utilidades básicas -------- */
   const rnd  = n => Math.floor(Math.random() * n);
 
@@ -50,6 +52,8 @@ const boardEngine = (() => {
   }
 
   function reset() {
+     // quita cualquier marca de boss/torre que pudiera quedar
+     gridEl.querySelectorAll('.forecast').forEach(c=>c.classList.remove('forecast'));
     monsters.forEach(m => { unmarkPlan(m); m.el.remove(); });
     monsters.length = 0;
     if (boss) { boss.el.remove(); boss = null; }
@@ -71,9 +75,10 @@ const boardEngine = (() => {
           const horiz = Math.abs(hero.x - m.x) >= Math.abs(hero.y - m.y);
           const dir   = horiz ? { x: Math.sign(hero.x - m.x), y: 0 }
                               : { x: 0,                      y: Math.sign(hero.y - m.y) };
+        const rng = 2 + (exports.rookExtra||0);      // 3 con reliquia
           m.plan = [
-            { x: m.x + dir.x,     y: m.y + dir.y     },
-            { x: m.x + dir.x * 2, y: m.y + dir.y * 2 }
+          { x: m.x + dir.x,     y: m.y + dir.y     },
+          { x: m.x + dir.x*rng, y: m.y + dir.y*rng }
           ];
           m.plan.forEach(p => mark(p.x, p.y, true));
           m.phase = 1;
@@ -84,23 +89,30 @@ const boardEngine = (() => {
           m.phase = 0;
         }
 
-      } else {                                        // peón rastreador
+      } else {
+        const speed = 1 + (exports.pawnFast?1:0);                                        // peón rastreador
         const dx  = hero.x - m.x,
               dy  = hero.y - m.y;
         const dir = Math.abs(dx) >= Math.abs(dy)
                     ? { x: Math.sign(dx), y: 0 }
                     : { x: 0,            y: Math.sign(dy) };
-        if (!ocp(m.x + dir.x, m.y + dir.y)) { m.x += dir.x; m.y += dir.y; }
+                    if (!ocp(m.x + dir.x*speed, m.y + dir.y*speed)){
+                      m.x += dir.x*speed; m.y += dir.y*speed;
+                 }
       }
     });
   }
 
   /* ---------------- bosses ---------------- */
-  function spawnBoss(floor, boardEl, hero) {
-    const pos = randomFreeCell([hero, ...monsters]);
-    if (floor === 2) createQueenBoss (pos, boardEl);
-    if (floor === 4) createDragonBoss(pos, boardEl);
-  }
+    function spawnBoss(floor, boardEl, hero) {
+          const pos = randomFreeCell([hero, ...monsters]);
+        /** identificador que usará advance() para instanciarlo */
+     const id = (floor === 2) ? 'bossQ' : 'bossB';
+        /* ① sólo lo telegrafiamos: */
+      queueSpawn(id, pos.x, pos.y);
+         /* ② anillo rojo de advertencia */
+      if (window.spawnFx) spawnFx('fx-boss', pos.x, pos.y, 600);
+}
 
   /* Queen – Gambito de Dama (floor 3) */
   function createQueenBoss(pos, boardEl) {
@@ -206,14 +218,18 @@ const boardEngine = (() => {
           document.getElementById('overlay').classList.add('show');
           return;
        }
-       const cls={p:'p',b:'b',r:'r'}[s.type];
-       const m={x:s.x,y:s.y,type:s.type,phase:0};
-       m.el=document.createElement('div');
-       m.el.className='sprite '+cls;
-       boardEl.appendChild(m.el);
-       monsters.push(m);
-       incoming.splice(i,1);
-    }
+       if (s.type === 'bossQ'){ createQueenBoss({x:s.x,y:s.y}, gridEl.parentElement); }
+       else if (s.type === 'bossB'){ createDragonBoss({x:s.x,y:s.y}, gridEl.parentElement); }
+       else{
+      const cls = {p:'p',b:'b',r:'r'}[s.type];
+      const m   = {x:s.x,y:s.y,type:s.type,phase:0};
+      m.el = document.createElement('div');
+      m.el.className = 'sprite '+cls;
+      gridEl.parentElement.appendChild(m.el);
+      monsters.push(m);
+       }
+       incoming.splice(i, 1); // eliminar de la cola
+      }
   };
 
   /* -------- movimientos del héroe -------- */
@@ -263,13 +279,24 @@ const boardEngine = (() => {
 
   /* -------- bomba -------- */
   function explodeBomb(cx, cy) {
-    for (let i = monsters.length - 1; i >= 0; i--)
-      if (Math.abs(monsters[i].x - cx) <= 1 && Math.abs(monsters[i].y - cy) <= 1)
-        removeMonster(i);
 
-    // ¿Golpea al jefe?
-    if (boss && Math.abs(boss.x - cx) <= 1 && Math.abs(boss.y - cy) <= 1)
-     damageBoss(1);   // 1 punto de daño por bomba
+    // 1️⃣  radio dinámico
+    const range  = Math.max(0, 1 + (exports.bombRange ?? 0));
+  
+    // 2️⃣  daño dinámico
+    const dmgBoss = 1 + (exports.bombExtra ?? 0);
+  
+    // ---- monstruos ------------------------------------------------
+    for (let i = monsters.length - 1; i >= 0; i--)
+        if (Math.abs(monsters[i].x - cx) <= range &&
+            Math.abs(monsters[i].y - cy) <= range)
+            removeMonster(i);
+  
+    // ---- jefe -----------------------------------------------------
+    if (boss &&
+        Math.abs(boss.x - cx) <= range &&
+        Math.abs(boss.y - cy) <= range)
+          damageBoss(dmgBoss);
   }
 
   /* -------- redraw -------- */
@@ -293,7 +320,8 @@ const boardEngine = (() => {
   /* -------- API pública -------- */
   return {
        damageBoss,
-       queueSpawn,   
+       queueSpawn,
+       
     
     /* checks */
     isOcupied : ocp,
@@ -309,7 +337,8 @@ const boardEngine = (() => {
     explodeBomb, advance, redrawSprites,
 
     /* util del héroe */
-    heroMoves
+    heroMoves,
+    exports  
   };
 
 })();
