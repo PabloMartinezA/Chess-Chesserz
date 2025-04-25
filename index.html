@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Chess-Rogue XL – Boss Run</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--grid:12;--tile:48px}
+body{margin:0;padding:24px;display:flex;flex-direction:column;align-items:center;gap:20px;
+     background:#0d0d1e;color:#fff;font-family:Poppins,sans-serif}
+
+#board{position:relative;border-radius:16px;overflow:hidden;
+       width:calc(var(--grid)*var(--tile));height:calc(var(--grid)*var(--tile));
+       box-shadow:0 0 32px #000 inset,0 16px 40px #0008}
+#grid{display:grid;grid-template-columns:repeat(var(--grid),var(--tile));
+      grid-template-rows:repeat(var(--grid),var(--tile))}
+
+.tile{width:var(--tile);height:var(--tile)}
+.light{background:#f0d9b5}.dark{background:#b58863}
+.tile:hover{filter:brightness(1.05)}
+.highlight{outline:3px solid #ffd857;filter:drop-shadow(0 0 2px #ffd857)}
+.forecast{outline:3px dashed #fa7878}
+
+.sprite{position:absolute;width:var(--tile);height:var(--tile);pointer-events:none;z-index:2;
+        transition:left .25s cubic-bezier(.25,1.4,.5,1),top .25s cubic-bezier(.25,1.4,.5,1)}
+.hero{background:url('https://chessboardjs.com/img/chesspieces/wikipedia/wN.png') center/80% no-repeat;
+      filter:drop-shadow(0 0 6px #0ff)}
+.p,.b,.r{filter:drop-shadow(0 0 6px #f55)}
+.p{background:url('https://chessboardjs.com/img/chesspieces/wikipedia/bP.png') center/80% no-repeat}
+.b{background:url('https://chessboardjs.com/img/chesspieces/wikipedia/bB.png') center/80% no-repeat}
+.r{background:url('https://chessboardjs.com/img/chesspieces/wikipedia/bR.png') center/80% no-repeat}
+/* ---- Boss visual ---- */
+.bossQ{background:url('https://chessboardjs.com/img/chesspieces/wikipedia/bQ.png') center/90% no-repeat;
+       width:calc(var(--tile)*1.2);height:calc(var(--tile)*1.2);transform:translate(-10%,-10%);
+       filter:drop-shadow(0 0 10px #ff70ff)}
+.bossB{background:url('https://chessboardjs.com/img/chesspieces/wikipedia/bB.png') center/90% no-repeat;
+       width:calc(var(--tile)*1.2);height:calc(var(--tile)*1.2);transform:translate(-10%,-10%);
+       filter:drop-shadow(0 0 10px #4cf)}
+
+#overlay{position:absolute;inset:0;display:flex;flex-direction:column;
+         align-items:center;justify-content:center;background:#000c;
+         color:#f66;font-size:36px;opacity:0;pointer-events:none;transition:.4s}
+#overlay.show{opacity:1;pointer-events:all}
+
+button{padding:8px 16px;border:0;border-radius:8px;cursor:pointer;background:#48f;color:#fff}
+#retry{background:#f66}
+
+#hand{display:flex;gap:8px;margin-top:4px}
+.card{width:60px;height:80px;border:2px solid #666;border-radius:6px;display:flex;align-items:center;
+      justify-content:center;background:#9c9c9c;cursor:pointer;transition:.2s;position:relative}
+.card:hover{transform:translateY(-4px)}
+.card.selected{border-color:#ffd857;box-shadow:0 0 6px #ffd857}
+.card img{width:75%;pointer-events:none}
+.card::after{content:"";position:absolute;inset:0;background:#000b;border-radius:4px;opacity:0;transition:.2s}
+.card.used::after{opacity:.7}
+
+/* ===== feedback de hechizos ===== */
+
+/* Bomba – círculo que se expande + sacudida */
+.fx-bomb{
+  position:absolute; width:var(--tile); height:var(--tile);
+  left:0; top:0; border-radius:50%; background:#ffdb4d;
+  opacity:.85; pointer-events:none;
+  transform:scale(.2);
+  animation:explode .45s ease-out forwards;
+  filter:drop-shadow(0 0 6px #f90);
+}
+@keyframes explode{
+  60%{transform:scale(2.4); opacity:.6;}
+  100%{transform:scale(3);  opacity:0;}
+}
+.shake{animation:shake .3s linear}
+@keyframes shake{
+  0%,100%{transform:translate(0)}
+  20%{transform:translate(-4px,1px)}
+  40%{transform:translate(4px,-2px)}
+  60%{transform:translate(-3px,2px)}
+  80%{transform:translate(3px,-1px)}
+}
+
+/* Tele-port – anillo azul que colapsa */
+.fx-tele{
+  position:absolute; width:var(--tile); height:var(--tile);
+  left:0; top:0; border:3px solid #6cf; border-radius:50%;
+  pointer-events:none; opacity:.9;
+  animation:warp .5s ease-out forwards;
+}
+@keyframes warp{
+  0%  {transform:scale(1);  opacity:.9;}
+  60% {transform:scale(2.2);opacity:.4;}
+  100%{transform:scale(.4); opacity:0;}
+}
+
+/* ===== fx especiales de bosses ==================================== */
+
+/* Disparo del dragón – destello incandescente naranja */
+.fx-dragon{
+  position:absolute; inset:0;           /* se recoloca con JS           */
+  width:var(--tile); height:var(--tile);
+  border-radius:50%;
+  background:#ff7b00;                   /* naranja brillante            */
+  box-shadow:0 0 8px 2px #ff7b00;
+  transform:scale(.25);
+  opacity:.9; pointer-events:none;
+  animation:dragonShot .45s ease-out forwards;
+}
+@keyframes dragonShot{
+  65%{transform:scale(1.9); opacity:.6;}
+  100%{transform:scale(2.3); opacity:0;}
+}
+
+/* Spawn de peones de la reina – anillo púrpura expansivo */
+.fx-spawn{
+  position:absolute; inset:0;
+  width:var(--tile); height:var(--tile);
+  border:3px solid #ff70ff;
+  border-radius:50%;
+  box-shadow:0 0 6px #ff70ff;
+  transform:scale(.35);
+  opacity:.95; pointer-events:none;
+  animation:spawnRing .5s ease-out forwards;
+}
+@keyframes spawnRing{
+  70% {transform:scale(1.6); opacity:.5;}
+  100%{transform:scale(2.0); opacity:0;}
+}
+
+/* ===== progresión y bosses ====================================== */
+
+/* Nuevo piso – flash verde expansivo */
+.fx-floor{
+  position:absolute; width:var(--tile); height:var(--tile);
+  border-radius:50%; background:#4f4;
+  box-shadow:0 0 12px 4px #4f4;
+  transform:scale(.45); opacity:.35; pointer-events:none;
+  animation:floorUp .8s ease-out forwards;
+}
+@keyframes floorUp{
+  60% {transform:scale(4.8); opacity:.18;}
+  100%{transform:scale(6.0); opacity:0;}
+}
+
+/* Spawn de Boss – anillo rojo brillante */
+.fx-boss{
+  position:absolute; width:var(--tile); height:var(--tile);
+  border:4px solid #ff4040; border-radius:50%;
+  box-shadow:0 0 10px #ff4040;
+  transform:scale(.3); opacity:.95; pointer-events:none;
+  animation:bossRing .6s ease-out forwards;
+}
+@keyframes bossRing{
+  65% {transform:scale(2.6); opacity:.6;}
+  100%{transform:scale(3.2); opacity:0;}
+}
+
+/* Escalera de subida */
+.stair{
+  background:linear-gradient(#ffe78e 10%,#ffb200 90%);
+  border-radius:6px;
+  box-shadow:0 0 6px 2px #ffd857;
+  width:var(--tile); height:var(--tile);
+}
+
+/* Aparición de la escalera – flash dorado */
+.fx-stair{
+  position:absolute;width:var(--tile);height:var(--tile);
+  border-radius:50%;background:#ffd857;pointer-events:none;
+  transform:scale(.3);opacity:.9;box-shadow:0 0 8px 3px #ffd857;
+  animation:stairFlash .6s ease-out forwards;
+}
+@keyframes stairFlash{
+  70%{transform:scale(2.4);opacity:.5;}
+  100%{transform:scale(3);opacity:0;}
+}
+
+/* Casilla telegráfica (spawn próximo) */
+.incoming{ outline:3px dashed #ff0000; }
+
+/* ===== feedback de hechizos ===== */
+.hpbar{
+  width:calc(var(--grid)*var(--tile));
+  height:16px;                        /* grosor de la barra   */
+  background:#333;                    /* contorno negro/gris  */
+  border-radius:8px;
+  overflow:hidden;
+  margin-top:6px;
+}
+.hpbar .fill{
+  height:100%;
+  width:100%;
+  background:#f55;                    /* rojo = vida          */
+  transition:width .25s;
+}
+
+
+</style>
+</head>
+<body>
+
+  <h2>Chess-Rogue XL</h2>
+
+  <div id="board">
+    <div id="grid"></div>
+  
+    <div id="overlay">
+      <div>💀 GAME OVER 💀</div>
+      <button id="retry">Reintentar</button>
+    </div>
+  </div>
+  
+  <div id="hand"></div>
+  
+  <template id="tmp-teleport-icon">
+      <img src="img/spells/teleportation (1).png" width="36" draggable="false">
+    </template>
+    <template id="tmp-bomb-icon">
+      <img src="img/spells/bomb (1).png"     width="36" draggable="false">
+    </template>
+  
+    <!-- barra de vida del boss -->
+    <div id="bossBar" class="hpbar" hidden>
+      <div class="fill"></div>
+    </div>
+  
+  <div>
+    <button id="newBtn">Nueva partida</button>
+    <span id="status">
+        Piso <span id="floor">1</span> |
+        Turnos <span id="turns">0</span> |
+        Puntos <span id="score">0</span> 
+    </span>
+  </div>
+  
+  <script src="engine.js"></script>
+  <script>
+  /* === Constantes y datos === */
+  const GRID=12, TILE=48, MAX_HP=10;
+  const HERO_START={x:5,y:5};
+  
+  const TURN_PER_FLOOR = 15;          // sube de piso cada x turnos
+  const MOVE_CARDS  = ['king','queen','rook','bishop','knight','pawn'];
+  const SPELL_CARDS = ['teleport','bomb'];
+  const SPELL_PROB  = 0.20;
+  
+  const CARD_IMG={king:'wK',queen:'wQ',rook:'wR',bishop:'wB',knight:'wN',pawn:'wP'};
+  const pieceURL=t=>`https://chessboardjs.com/img/chesspieces/wikipedia/${t}.png`;
+  
+  /* === DOM === */
+  const gridEl   = document.getElementById('grid');
+  const handEl   = document.getElementById('hand');
+  const overlay  = document.getElementById('overlay');
+  const boardEl  = document.getElementById('board');
+  const scoreEl  = document.getElementById('score');
+  const turnsEl  = document.getElementById('turns');
+  const floorEl  = document.getElementById('floor');
+  const hpEl     = document.getElementById('hp');
+  const maxHpEl  = document.getElementById('maxHp');
+
+  const bossBar     = document.getElementById('bossBar');
+const bossFill    = bossBar.querySelector('.fill');
+
+let stair = null;          // {x,y} o null
+let stairEl = null;
+
+
+  
+  /* === tablero estático === */
+  for(let y=0;y<GRID;y++)
+   for(let x=0;x<GRID;x++){
+     const t=document.createElement('div');
+     t.className='tile '+((x+y)%2?'dark':'light');
+     t.dataset.x=x; t.dataset.y=y;
+     gridEl.appendChild(t);
+   }
+  
+  /* héroe */
+  const heroSp=document.createElement('div');
+  heroSp.className='sprite hero';
+  boardEl.appendChild(heroSp);
+  
+  /* === Estado general === */
+  let hero, score, turns, floor, movesInFloor;
+  let hand=[], currentCard=null;
+  
+  /* === utilitarios === */
+  const place=(el,x,y)=>{el.style.left=x*TILE+'px';el.style.top=y*TILE+'px';};
+  const icon = id => document.getElementById(`tmp-${id}-icon`).content.firstElementChild.cloneNode(true);
+  const spawnFx = (cls,x,y,d=600)=>{
+  const fx=document.createElement('div');
+  fx.className = cls;
+  place(fx,x,y);
+  boardEl.appendChild(fx);
+  setTimeout(()=>fx.remove(), d);
+};
+window.spawnFx = spawnFx;   //  ← añade esta línea
+
+function spawnStair(){
+  const pos = boardEngine.randomFreeCell([hero,...boardEngine.allPieces()]);
+  stair = pos;
+  stairEl = document.createElement('div');
+  stairEl.className = 'sprite stair';
+  boardEl.appendChild(stairEl);
+  place(stairEl,pos.x,pos.y);
+  spawnFx('fx-stair',pos.x,pos.y,600);
+}
+
+
+  
+  /* ---------- MANO ---------- */
+  function usable(c){return !c.used && (c.kind==='spell'||boardEngine.heroMoves(hero,GRID,c.type).length);}
+  function giveHand(){
+    hand.length=0;handEl.textContent='';
+    for(let i=0;i<3;i++){
+      const type=Math.random()<SPELL_PROB
+                 ? SPELL_CARDS[Math.random()*SPELL_CARDS.length|0]
+                 : MOVE_CARDS [Math.random()*MOVE_CARDS.length |0];
+  
+      const el=document.createElement('div');
+      el.className='card'; el.dataset.type=type;
+  
+      if(MOVE_CARDS.includes(type)){
+        el.dataset.kind='move';
+        const img=document.createElement('img');img.src=pieceURL(CARD_IMG[type]);el.appendChild(img);
+      }else{
+        el.dataset.kind='spell';
+        el.appendChild(icon(type));
+      }
+      el.onclick=()=>selectCard(el);
+      hand.push({type,kind:el.dataset.kind,el,used:false});
+      handEl.appendChild(el);
+    }
+    pickNext();
+  }
+  
+  function pickNext(){const n=hand.find(usable); n?selectCard(n.el):(giveHand(),hand.some(usable)||die());}
+  function selectCard(el){
+    if(!el||el.classList.contains('used'))return;
+    const c=hand.find(h=>h.el===el); if(!usable(c)){burn(c);pickNext();return;}
+    currentCard=c.type; hand.forEach(h=>h.el.classList.toggle('selected',h===c));
+    clearHi(); c.kind==='move'?hiMoves():c.type==='teleport'?hiTeleport():hiBomb();
+  }
+  const burn=c=>{c.used=true;c.el.classList.add('used');};
+  const burnCurrent=()=>{const c=hand.find(h=>h.type===currentCard&&!h.used); c&&burn(c); pickNext();};
+  
+  /* ---------- highlights ---------- */
+  const clearHi=()=>document.querySelectorAll('.highlight').forEach(t=>t.classList.remove('highlight'));
+  const hiMoves =()=>boardEngine.heroMoves(hero,GRID,currentCard).forEach(p=>gridEl.children[p.y*GRID+p.x].classList.add('highlight'));
+  const hiTeleport=()=>[...gridEl.children].forEach(t=>!boardEngine.isOcupied(+t.dataset.x,+t.dataset.y)&&t.classList.add('highlight'));
+  const hiBomb=()=>[...gridEl.children].forEach(t=>t.classList.add('highlight'));
+  
+  /* ---------- hechizos ---------- */
+  function bomb(x,y){
+    spawnFx('fx-bomb',x,y);
+    boardEl.classList.add('shake');setTimeout(()=>boardEl.classList.remove('shake'),300);
+    boardEngine.explodeBomb(x,y);score+=25;clearHi();
+    drawBossHp();
+  }
+  
+  /* ---------- input tablero ---------- */
+  gridEl.onclick=e=>{
+    if(!e.target.classList.contains('tile')||overlay.classList.contains('show'))return;
+    const x=+e.target.dataset.x, y=+e.target.dataset.y;
+    if(MOVE_CARDS.includes(currentCard)&&e.target.classList.contains('highlight')) return turn({x,y});
+    if(currentCard==='teleport'&&e.target.classList.contains('highlight')){
+        spawnFx('fx-tele',x,y);heroSp.style.opacity=.3;setTimeout(()=>heroSp.style.opacity=1,200);
+        hero={x,y};burnCurrent();step();draw();if(stair && hero.x===stair.x && hero.y===stair.y){ levelUp(); return; }}
+
+    if(currentCard==='bomb'&&e.target.classList.contains('highlight')){bomb(x,y);burnCurrent();step();draw();}
+  };
+  
+  /* ---------- bucle de turno ---------- */
+  function step(){boardEngine.advance(hero);}
+  function turn(dest){
+  hero = dest;
+  turns++; movesInFloor++; score += 10;
+  burnCurrent();
+
+ // ¿Pisó la escalera?
+ if(stair && dest.x === stair.x && dest.y === stair.y){
+   levelUp();
+   return;               // se redibuja dentro de levelUp
+ }
+
+  if(!stair && movesInFloor >= TURN_PER_FLOOR) spawnStair();
+  spawns(); step(); draw();
+  if(boardEngine.hitHero(hero.x,hero.y)) die();
+}
+  
+function levelUp(){
+  floor++; movesInFloor = 0;
+  spawnFx('fx-floor', hero.x, hero.y, 800);
+
+  if(stairEl){ stairEl.remove(); stairEl=null; stair=null; }
+
+  boardEngine.reset();
+  clearHi(); giveHand();
+
+  for(let i=0;i<1+floor;i++) addEnemy('p');   // ahora se telegrafa
+
+  draw();                    // ← héroe se re-posiciona inmediatamente
+}
+
+  
+  /* ---------- spawns ---------- */
+  function addEnemy(t='p'){
+    const cls={p:'p',b:'b',r:'r'}[t];
+    const pos=boardEngine.randomFreeCell([hero,...boardEngine.allPieces()]);
+    const m={x:pos.x,y:pos.y,type:t,phase:0};
+    m.el=document.createElement('div');m.el.className='sprite '+cls;
+    /* ahora es diferido en 2 fases */
+    boardEngine.queueSpawn(t,pos.x,pos.y);
+  }
+  function spawns(){
+    if(movesInFloor===1) addEnemy('p');
+    if(movesInFloor>1&&movesInFloor%12===0) addEnemy('b');
+    if(movesInFloor&&movesInFloor%24===0) addEnemy('r');
+    if(!boardEngine.boss && ((floor===2)||(floor===4)))
+        boardEngine.spawnBoss(floor,boardEl,hero);
+  }
+  
+  /* ---------- UI ---------- */
+  function draw(){
+    place(heroSp,hero.x,hero.y);
+    boardEngine.redrawSprites();
+    scoreEl.textContent=score;
+    turnsEl.textContent=turns; floorEl.textContent=floor;
+    drawBossHp();
+  }
+
+  function drawBossHp(){
+  if(boardEngine.boss){
+    const b = boardEngine.boss;
+    bossBar.hidden = false;
+    bossFill.style.width = (b.hp / b.maxHp * 100) + '%';
+  }else{
+    bossBar.hidden = true;
+  }
+}
+
+  
+  /* ---------- flujo ---------- */
+  const die=()=>{overlay.classList.add('show');gridEl.style.pointerEvents='none';};
+  function newGame(){
+    overlay.classList.remove('show');gridEl.style.pointerEvents='auto';
+  
+    hero={...HERO_START};
+    score=turns=movesInFloor=0; floor=1;
+    boardEngine.reset();
+    document.querySelectorAll('.forecast').forEach(t=>t.classList.remove('forecast'));
+    clearHi();giveHand();addEnemy('p');draw();
+    bossBar.hidden = true;
+  }
+  
+  /* ---------- botones ---------- */
+  document.getElementById('newBtn').onclick=newGame;
+  document.getElementById('retry').onclick=newGame;
+  newGame();
+  </script>
+  </body>
+  </html>
