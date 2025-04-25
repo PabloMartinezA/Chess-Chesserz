@@ -25,6 +25,16 @@ body{margin:0;padding:24px;display:flex;flex-direction:column;align-items:center
         transition:left .25s cubic-bezier(.25,1.4,.5,1),top .25s cubic-bezier(.25,1.4,.5,1)}
 .hero{background:url('https://chessboardjs.com/img/chesspieces/wikipedia/wN.png') center/80% no-repeat;
       filter:drop-shadow(0 0 6px #0ff)}
+      /* halo turquesa pulsante cuando hay escudo */
+.hero.hasShield{
+  filter:drop-shadow(0 0 12px #00ffff) brightness(1.2);
+  animation:shieldPulse 1.1s ease-in-out infinite alternate;
+}
+@keyframes shieldPulse{
+  from{transform:scale(1)}
+  to  {transform:scale(1.08)}
+}
+
 .p,.b,.r{filter:drop-shadow(0 0 6px #f55)}
 .p{background:url('https://chessboardjs.com/img/chesspieces/wikipedia/bP.png') center/80% no-repeat}
 .b{background:url('https://chessboardjs.com/img/chesspieces/wikipedia/bB.png') center/80% no-repeat}
@@ -193,6 +203,24 @@ button{padding:8px 16px;border:0;border-radius:8px;cursor:pointer;background:#48
 }
 
 
+.relicBtn{
+  padding:10px;border:2px solid #666;border-radius:8px;background:#333;color:#ffd857;
+  cursor:pointer;font-family:Poppins,sans-serif;transition:.2s;
+}
+.relicBtn:hover{transform:scale(1.03);border-color:#ffd857;background:#444;}
+
+/* HUD – contador de escudo */
+#shieldUI{color:#0ff;font-weight:600;transition:.25s}
+
+/* Efecto cuando el héroe está blindado */
+#board.shielded{
+  box-shadow:0 0 20px 4px #00ffffaa inset,0 16px 40px #0008;
+}
+
+/* Breve destello rojo al perder el último escudo */
+@keyframes shieldBreak{0%{background:#f00}100%{background:transparent}}
+#board.break{animation:shieldBreak .3s}
+
 </style>
 </head>
 <body>
@@ -223,24 +251,40 @@ button{padding:8px 16px;border:0;border-radius:8px;cursor:pointer;background:#48
     </div>
   
   <div>
-    <button id="newBtn">Nueva partida</button>
     <span id="status">
-        Piso <span id="floor">1</span> |
-        Turnos <span id="turns">0</span> |
-        Puntos <span id="score">0</span> 
+        <h3>Piso: <span id="floor">1</span> |
+        Turnos: <span id="turns">0</span> |
+        Puntos: <span id="score">0</span> |
+        Escudo: <span id="shieldUI">0</span> |
+        Prob. Hechizo: <span id="probSpellUI">0</span></h3>
     </span>
   </div>
+
+  <div><button id="newBtn">Nueva partida</button></div>
+
+    <!-- === elección de reliquia ============================== -->
+<div id="relicPane" style="position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+background:#000c;z-index:99;">
+<div style="background:#1b1b2a;border:3px solid #ffd857;border-radius:10px;
+     padding:24px;min-width:320px;text-align:center;color:#fff;">
+<h3>Elige 1 reliquia</h3>
+<div id="relicOptions" style="display:flex;flex-direction:column;gap:12px;margin-top:12px;"></div>
+</div>
+</div>
   
   <script src="engine.js"></script>
   <script>
+  boardEngine.rookExtra = 0; 
   /* === Constantes y datos === */
   const GRID=12, TILE=48, MAX_HP=10;
   const HERO_START={x:5,y:5};
+
+  let HAND_SIZE = 3;          // tamaño de la mano inicial
   
-  const TURN_PER_FLOOR = 15;          // sube de piso cada x turnos
+  const TURN_PER_FLOOR = 5;          // sube de piso cada x turnos
   const MOVE_CARDS  = ['king','queen','rook','bishop','knight','pawn'];
   const SPELL_CARDS = ['teleport','bomb'];
-  const SPELL_PROB  = 0.20;
+  let SPELL_PROB  = 0.30;
   
   const CARD_IMG={king:'wK',queen:'wQ',rook:'wR',bishop:'wB',knight:'wN',pawn:'wP'};
   const pieceURL=t=>`https://chessboardjs.com/img/chesspieces/wikipedia/${t}.png`;
@@ -255,6 +299,8 @@ button{padding:8px 16px;border:0;border-radius:8px;cursor:pointer;background:#48
   const floorEl  = document.getElementById('floor');
   const hpEl     = document.getElementById('hp');
   const maxHpEl  = document.getElementById('maxHp');
+  
+
 
   const bossBar     = document.getElementById('bossBar');
 const bossFill    = bossBar.querySelector('.fill');
@@ -294,6 +340,72 @@ let stairEl = null;
 };
 window.spawnFx = spawnFx;   //  ← añade esta línea
 
+/* ===== Reliquias ================================================= */
+const relicPane   = document.getElementById('relicPane');
+const relicOptsEl = document.getElementById('relicOptions');
+
+// 1-A. catálogo original (no lo modifiques nunca)
+const RELICS_MASTER = [
+  { id:'shieldPlusRook', name:'Escudo del Cobarde',
+    desc:'+1 escudo al empezar cada piso\nLas torres +1 alcance',
+    apply(){
+      // el +1 se aplicará automáticamente en levelUp, ver 2-B
+      boardEngine.exports.rookExtra = 1;
+    }},
+  { id:'manoExtra', name:'Dedos rápidos',
+    desc:'+1 carta en mano\nLos peones mueven 2',
+    apply(){
+      HAND_SIZE = 4;
+      boardEngine.exports.pawnFast = true;
+    }},
+    { id:'bombaGorda',      name:'Pólvora Bélica',
+    desc:'+1 daño y ×2 puntos con bombas | Bombas cubren 1 casilla menos',
+    apply(){ boardEngine.exports.bombExtra = 1;
+             boardEngine.exports.bombScore = 2;
+             boardEngine.exports.bombRange = -1; } },
+    { id:'libroArcano',     name:'Libro Arcano',
+    desc:'+15 % hechizo | -1 carta en mano',
+    apply(){ SPELL_PROB = Math.min(1,SPELL_PROB+.15);
+             HAND_SIZE = Math.max(2,HAND_SIZE-1);} },
+
+    { id:'motorTitanio', name:'Motor de Titanio',
+  desc:'Ganas +1 escudo cada 10 turnos\n-20 % de hechizo',
+  apply(){
+     boardEngine.exports.titanCounter = 0;      
+     SPELL_PROB = Math.max(0, SPELL_PROB - .20);
+  }}
+
+];
+
+// 1-B. variables de estado
+let relicPool   = [...RELICS_MASTER];   // lo que aún puede salir
+let activeRelics = [];                  // lo que
+
+function chooseRelic(){
+  // siempre ofrecer 3 (o menos si quedan <3)
+  const picks = relicPool          // NO hace falta clonar
+                 .slice()        // clónalo si quieres
+                 .sort(()=>Math.random()-.5)
+                 .slice(0,3);
+  relicOptsEl.innerHTML = '';
+  picks.forEach(r=>{
+    const b=document.createElement('button');
+    b.className='relicBtn';
+    b.innerText = `${r.name}\n${r.desc}`;
+    b.onclick = ()=>takeRelic(r);
+    relicOptsEl.appendChild(b);
+  });
+  relicPane.style.display='flex';
+}
+
+function takeRelic(r){
+  relicPool   = relicPool.filter(x=>x.id!==r.id);
+  activeRelics.push(r.id);    // ← la recordamos
+  r.apply();                  // activa su efecto global
+  relicPane.style.display='none';
+  updateShieldHUD();
+}
+
 function spawnStair(){
   const pos = boardEngine.randomFreeCell([hero,...boardEngine.allPieces()]);
   stair = pos;
@@ -304,13 +416,28 @@ function spawnStair(){
   spawnFx('fx-stair',pos.x,pos.y,600);
 }
 
+function updateProbSpellHUD(){
+  const probSpellEl = document.getElementById('probSpellUI');
+  probSpellEl.textContent = Math.round(SPELL_PROB * 100) + '%';
+  boardEngine.exports.probSpell = SPELL_PROB;
+}
 
+function updateShieldHUD(){
+  shieldUI.textContent = hero.shield|0;
+  boardEl.classList.toggle('shielded', hero.shield>0);
+  heroSp.classList.toggle('hasShield', hero.shield>0);
+  if(hero.justBroke){
+      boardEl.classList.add('break');
+      setTimeout(()=>boardEl.classList.remove('break'),300);
+      hero.justBroke = false;
+  }
+}
   
   /* ---------- MANO ---------- */
   function usable(c){return !c.used && (c.kind==='spell'||boardEngine.heroMoves(hero,GRID,c.type).length);}
   function giveHand(){
     hand.length=0;handEl.textContent='';
-    for(let i=0;i<3;i++){
+    for(let i=0;i<HAND_SIZE;i++){
       const type=Math.random()<SPELL_PROB
                  ? SPELL_CARDS[Math.random()*SPELL_CARDS.length|0]
                  : MOVE_CARDS [Math.random()*MOVE_CARDS.length |0];
@@ -351,10 +478,14 @@ function spawnStair(){
   /* ---------- hechizos ---------- */
   function bomb(x,y){
     spawnFx('fx-bomb',x,y);
-    boardEl.classList.add('shake');setTimeout(()=>boardEl.classList.remove('shake'),300);
-    boardEngine.explodeBomb(x,y);score+=25;clearHi();
-    drawBossHp();
-  }
+
+    const mult = boardEngine.exports.bombScore ?? 1;
+    score += 25 * mult;
+
+    boardEl.classList.add('shake'); setTimeout(()=>boardEl.classList.remove('shake'),300);
+    boardEngine.explodeBomb(x,y);
+    clearHi(); drawBossHp();
+}
   
   /* ---------- input tablero ---------- */
   gridEl.onclick=e=>{
@@ -382,12 +513,35 @@ function spawnStair(){
  }
 
   if(!stair && movesInFloor >= TURN_PER_FLOOR) spawnStair();
-  spawns(); step(); draw();
-  if(boardEngine.hitHero(hero.x,hero.y)) die();
+  step(); spawns();  draw();
+  if(boardEngine.hitHero(hero.x,hero.y)){
+   // cuando recibes daño:
+if(hero.shield>0){
+     hero.shield--;
+     hero.justBroke = hero.shield===0;
+     updateShieldHUD();
+}else die();
+  }
+
+  if(boardEngine.exports.titanCounter !== undefined){
+    boardEngine.exports.titanCounter++;
+    if(boardEngine.exports.titanCounter === 10){
+        hero.shield++;                   // recompensa
+        boardEngine.exports.titanCounter = 0;
+        updateShieldHUD();
+    }
+  }
+
 }
   
 function levelUp(){
   floor++; movesInFloor = 0;
+  // ¿tienes el Escudo del Cobarde?
+if (activeRelics.includes('shieldPlusRook')){
+    hero.shield = (hero.shield||0) + 1;
+}
+updateShieldHUD();
+
   spawnFx('fx-floor', hero.x, hero.y, 800);
 
   if(stairEl){ stairEl.remove(); stairEl=null; stair=null; }
@@ -398,6 +552,12 @@ function levelUp(){
   for(let i=0;i<1+floor;i++) addEnemy('p');   // ahora se telegrafa
 
   draw();                    // ← héroe se re-posiciona inmediatamente
+
+  // si acabamos de derrotar un boss (pisos 2,4,6,…)
+  if (floor % 2 === 1) {     // 3-5-7…
+  chooseRelic();
+}
+
 }
 
   
@@ -411,9 +571,9 @@ function levelUp(){
     boardEngine.queueSpawn(t,pos.x,pos.y);
   }
   function spawns(){
-    if(movesInFloor===1) addEnemy('p');
-    if(movesInFloor>1&&movesInFloor%12===0) addEnemy('b');
-    if(movesInFloor&&movesInFloor%24===0) addEnemy('r');
+    if(movesInFloor % 1 === 0) addEnemy('p');   // ¡peón cada 1 turnos!
+    if(movesInFloor % 3 === 0) addEnemy('b');   // alfil cada 3
+    if(movesInFloor % 4 === 0) addEnemy('r');   // torre cada 4
     if(!boardEngine.boss && ((floor===2)||(floor===4)))
         boardEngine.spawnBoss(floor,boardEl,hero);
   }
@@ -424,6 +584,8 @@ function levelUp(){
     boardEngine.redrawSprites();
     scoreEl.textContent=score;
     turnsEl.textContent=turns; floorEl.textContent=floor;
+    updateShieldHUD();
+    updateProbSpellHUD();
     drawBossHp();
   }
 
@@ -442,13 +604,21 @@ function levelUp(){
   const die=()=>{overlay.classList.add('show');gridEl.style.pointerEvents='none';};
   function newGame(){
     overlay.classList.remove('show');gridEl.style.pointerEvents='auto';
-  
+    if (stairEl){ stairEl.remove(); stairEl = null; stair = null; }
     hero={...HERO_START};
     score=turns=movesInFloor=0; floor=1;
     boardEngine.reset();
     document.querySelectorAll('.forecast').forEach(t=>t.classList.remove('forecast'));
     clearHi();giveHand();addEnemy('p');draw();
-    bossBar.hidden = true;
+    bossBar.hidden = true; 
+    relicPool     = [...RELICS_MASTER];
+    activeRelics  = [];
+    HAND_SIZE     = 3;          // valores base
+    SPELL_PROB    = 0.30;
+    boardEngine.exports.rookExtra = 0;
+    boardEngine.exports.pawnFast  = false;
+    hero.shield   = 0;
+    updateShieldHUD();
   }
   
   /* ---------- botones ---------- */
@@ -456,5 +626,6 @@ function levelUp(){
   document.getElementById('retry').onclick=newGame;
   newGame();
   </script>
+
   </body>
   </html>
